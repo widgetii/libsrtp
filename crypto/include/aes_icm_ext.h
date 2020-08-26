@@ -59,6 +59,7 @@ typedef struct {
     int key_size;
     HI_HANDLE hCipher;
     HI_U8 *key;
+    HI_UNF_CIPHER_KEY_LENGTH_E key_type;
 } srtp_aes_icm_ctx_t;
 
 #endif /* HISILISON */

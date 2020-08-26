@@ -9,7 +9,6 @@
 #include <config.h>
 #endif
 
-#define HISILICON
 #include "aes_icm_ext.h"
 #include "crypto_types.h"
 #include "err.h" /* for srtp_debug */
@@ -22,6 +21,67 @@ srtp_debug_module_t srtp_mod_aes_icm = {
     0,             /* debugging is off by default */
     "aes icm hisi" /* printable module name       */
 };
+
+void hexDump(const char *desc, const void *addr, const int len)
+{
+    int i;
+    unsigned char buff[17];
+    const unsigned char *pc = (const unsigned char *)addr;
+
+    // Output description if given.
+
+    if (desc != NULL)
+        printf("%s:\n", desc);
+
+    // Length checks.
+
+    if (len == 0) {
+        printf("  ZERO LENGTH\n");
+        return;
+    } else if (len < 0) {
+        printf("  NEGATIVE LENGTH: %d\n", len);
+        return;
+    }
+
+    // Process every byte in the data.
+
+    for (i = 0; i < len; i++) {
+        // Multiple of 16 means new line (with line offset).
+
+        if ((i % 16) == 0) {
+            // Don't print ASCII buffer for the "zeroth" line.
+
+            if (i != 0)
+                printf("  %s\n", buff);
+
+            // Output the offset.
+
+            printf("  %04x ", i);
+        }
+
+        // Now the hex code for the specific character.
+        printf(" %02x", pc[i]);
+
+        // And buffer a printable ASCII character for later.
+
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e)) // isprint() may be better.
+            buff[i % 16] = '.';
+        else
+            buff[i % 16] = pc[i];
+        buff[(i % 16) + 1] = '\0';
+    }
+
+    // Pad out last line if not exactly 16 characters.
+
+    while ((i % 16) != 0) {
+        printf("   ");
+        i++;
+    }
+
+    // And print the final ASCII buffer.
+
+    printf("  %s\n", buff);
+}
 
 /*
  * integer counter mode works as follows:
@@ -65,9 +125,9 @@ srtp_debug_module_t srtp_mod_aes_icm = {
  * value.  The tlen argument is for the AEAD tag length, which
  * isn't used in counter mode.
  */
-static srtp_err_status_t srtp_aes_icm_openssl_alloc(srtp_cipher_t **c,
-                                                    int key_len,
-                                                    int tlen)
+static srtp_err_status_t srtp_aes_icm_hisi_alloc(srtp_cipher_t **c,
+                                                 int key_len,
+                                                 int tlen)
 {
     srtp_aes_icm_ctx_t *icm;
 
@@ -99,7 +159,7 @@ static srtp_err_status_t srtp_aes_icm_openssl_alloc(srtp_cipher_t **c,
     int res = HI_UNF_CIPHER_Init();
     assert(res == 0);
 
-    //icm->ctx = EVP_CIPHER_CTX_new();
+    // icm->ctx = EVP_CIPHER_CTX_new();
     res = HI_UNF_CIPHER_CreateHandle(&icm->hCipher);
 
     if (res) {
@@ -120,10 +180,10 @@ static srtp_err_status_t srtp_aes_icm_openssl_alloc(srtp_cipher_t **c,
         icm->key_size = SRTP_AES_128_KEY_LEN;
         break;
     case SRTP_AES_ICM_192_KEY_LEN_WSALT:
-	/*
-        (*c)->algorithm = SRTP_AES_ICM_192;
-        (*c)->type = &srtp_aes_icm_192;
-        icm->key_size = SRTP_AES_192_KEY_LEN;*/
+        /*
+            (*c)->algorithm = SRTP_AES_ICM_192;
+            (*c)->type = &srtp_aes_icm_192;
+            icm->key_size = SRTP_AES_192_KEY_LEN;*/
         break;
     case SRTP_AES_ICM_256_KEY_LEN_WSALT:
         (*c)->algorithm = SRTP_AES_ICM_256;
@@ -141,7 +201,7 @@ static srtp_err_status_t srtp_aes_icm_openssl_alloc(srtp_cipher_t **c,
 /*
  * This function deallocates an instance of this engine
  */
-static srtp_err_status_t srtp_aes_icm_openssl_dealloc(srtp_cipher_t *c)
+static srtp_err_status_t srtp_aes_icm_hisi_dealloc(srtp_cipher_t *c)
 {
     srtp_aes_icm_ctx_t *ctx;
 
@@ -154,15 +214,16 @@ static srtp_err_status_t srtp_aes_icm_openssl_dealloc(srtp_cipher_t *c)
      */
     ctx = (srtp_aes_icm_ctx_t *)c->state;
     if (ctx != NULL) {
-	int res = HI_UNF_CIPHER_DestroyHandle(ctx->hCipher);
-	assert(res == 0);
+        printf("HI_UNF_CIPHER_DestroyHandle(%d)\n", ctx->hCipher);
+        int res = HI_UNF_CIPHER_DestroyHandle(ctx->hCipher);
+        assert(res == 0);
 
-        //EVP_CIPHER_CTX_free(ctx->ctx);
         /* zeroize the key material */
         octet_string_set_to_zero(ctx, sizeof(srtp_aes_icm_ctx_t));
         srtp_crypto_free(ctx);
-	res = HI_UNF_CIPHER_DeInit();
-	assert(res == 0);
+        //    printf("HI_UNF_CIPHER_DeInit()\n");
+        // res = HI_UNF_CIPHER_DeInit();
+        // assert(res == 0);
     }
 
     /* free memory */
@@ -172,7 +233,7 @@ static srtp_err_status_t srtp_aes_icm_openssl_dealloc(srtp_cipher_t *c)
 }
 
 /*
- * aes_icm_openssl_context_init(...) initializes the aes_icm_context
+ * aes_icm_hisi_context_init(...) initializes the aes_icm_context
  * using the value in key[].
  *
  * the key is the secret key
@@ -180,11 +241,11 @@ static srtp_err_status_t srtp_aes_icm_openssl_dealloc(srtp_cipher_t *c)
  * the salt is unpredictable (but not necessarily secret) data which
  * randomizes the starting point in the keystream
  */
-static srtp_err_status_t srtp_aes_icm_openssl_context_init(void *cv,
-                                                           const uint8_t *key)
+static srtp_err_status_t srtp_aes_icm_hisi_context_init(void *cv,
+                                                        const uint8_t *key)
 {
     srtp_aes_icm_ctx_t *c = (srtp_aes_icm_ctx_t *)cv;
-    //const EVP_CIPHER *evp;
+    // const EVP_CIPHER *evp;
 
     /*
      * set counter and initial values to 'offset' value, being careful not to
@@ -210,24 +271,28 @@ static srtp_err_status_t srtp_aes_icm_openssl_context_init(void *cv,
     }
     c->key = malloc(c->key_size);
     memcpy(c->key, key, c->key_size);
+    // hexDump("key", c->key, c->key_size);
 
     switch (c->key_size) {
     case SRTP_AES_256_KEY_LEN:
-        //evp = EVP_aes_256_ctr();
+        // printf("SRTP_AES_256_KEY_LEN\n");
+        c->key_type = HI_UNF_CIPHER_KEY_AES_256BIT;
         break;
     case SRTP_AES_192_KEY_LEN:
-        //evp = EVP_aes_192_ctr();
+        // printf("SRTP_AES_192_KEY_LEN\n");
+        c->key_type = HI_UNF_CIPHER_KEY_AES_192BIT;
         break;
     case SRTP_AES_128_KEY_LEN:
-        //evp = EVP_aes_128_ctr();
+        // printf("SRTP_AES_128_KEY_LEN\n");
+        c->key_type = HI_UNF_CIPHER_KEY_AES_128BIT;
         break;
     default:
         return srtp_err_status_bad_param;
         break;
     }
 
-    //EVP_CIPHER_CTX_cleanup(c->ctx);
-    //if (!EVP_EncryptInit_ex(c->ctx, evp, NULL, key, NULL)) {
+    // EVP_CIPHER_CTX_cleanup(c->ctx);
+    // if (!EVP_EncryptInit_ex(c->ctx, evp, NULL, key, NULL)) {
     //    return srtp_err_status_fail;
     //} else {
     //    return srtp_err_status_ok;
@@ -240,10 +305,9 @@ static srtp_err_status_t srtp_aes_icm_openssl_context_init(void *cv,
  * aes_icm_set_iv(c, iv) sets the counter value to the exor of iv with
  * the offset
  */
-static srtp_err_status_t srtp_aes_icm_openssl_set_iv(
-    void *cv,
-    uint8_t *iv,
-    srtp_cipher_direction_t dir)
+static srtp_err_status_t srtp_aes_icm_hisi_set_iv(void *cv,
+                                                  uint8_t *iv,
+                                                  srtp_cipher_direction_t dir)
 {
     srtp_aes_icm_ctx_t *c = (srtp_aes_icm_ctx_t *)cv;
     v128_t nonce;
@@ -262,27 +326,28 @@ static srtp_err_status_t srtp_aes_icm_openssl_set_iv(
     debug_print(srtp_mod_aes_icm, "set_counter: %s",
                 v128_hex_string(&c->counter));
 
-HI_UNF_CIPHER_CTRL_S stCtrl;
-memset(&stCtrl, 0, sizeof(HI_UNF_CIPHER_CTRL_S));
-stCtrl.enAlg = HI_UNF_CIPHER_ALG_AES;
-stCtrl.enKeyLen = HI_UNF_CIPHER_KEY_AES_128BIT;
-stCtrl.enBitWidth = HI_UNF_CIPHER_BIT_WIDTH_128BIT; // ???
-stCtrl.enKeySrc = HI_UNF_CIPHER_KEY_SRC_USER;
-stCtrl.enWorkMode = HI_UNF_CIPHER_WORK_MODE_CTR;
-stCtrl.stChangeFlags.bit1IV = 1;
-assert(c->key_size == 16);
-  memcpy(stCtrl.u32Key, c->key, c->key_size);
-  memcpy(stCtrl.u32IV, iv, sizeof(stCtrl.u32IV));
-assert(sizeof(stCtrl.u32IV) == 4);
+    HI_UNF_CIPHER_CTRL_S stCtrl;
+    memset(&stCtrl, 0, sizeof(HI_UNF_CIPHER_CTRL_S));
+    stCtrl.enAlg = HI_UNF_CIPHER_ALG_AES;
+    stCtrl.enKeyLen = c->key_type;
+    stCtrl.enBitWidth = HI_UNF_CIPHER_BIT_WIDTH_128BIT;
+    stCtrl.enKeySrc = HI_UNF_CIPHER_KEY_SRC_USER;
+    stCtrl.enWorkMode = HI_UNF_CIPHER_WORK_MODE_CTR;
+    stCtrl.stChangeFlags.bit1IV = 1;
+    memcpy(stCtrl.u32Key, c->key, c->key_size);
+    // hexDump("original key", c->key, c->key_size);
+    // hexDump("copied key", stCtrl.u32Key, c->key_size);
+    memcpy(stCtrl.u32IV, c->counter.v8, sizeof(stCtrl.u32IV));
+    // hexDump("iv key", c->counter.v8, 4*4);
+    // hexDump("iv", stCtrl.u32IV, sizeof(stCtrl.u32IV));
 
-
-  int res = HI_UNF_CIPHER_ConfigHandle(c->hCipher, &stCtrl);
-	if (res) {
-	return srtp_err_status_fail;
-	} else {
-	return srtp_err_status_ok;
-	}
-
+    int res = HI_UNF_CIPHER_ConfigHandle(c->hCipher, &stCtrl);
+    // printf("HI_UNF_CIPHER_ConfigHandle == %d\n", res);
+    if (res) {
+        return srtp_err_status_fail;
+    } else {
+        return srtp_err_status_ok;
+    }
 }
 
 /*
@@ -293,14 +358,19 @@ assert(sizeof(stCtrl.u32IV) == 4);
  *	buf	data to encrypt
  *	enc_len	length of encrypt buffer
  */
-static srtp_err_status_t srtp_aes_icm_openssl_encrypt(void *cv,
-                                                      unsigned char *buf,
-                                                      unsigned int *enc_len)
+static srtp_err_status_t srtp_aes_icm_hisi_encrypt(void *cv,
+                                                   unsigned char *buf,
+                                                   unsigned int *enc_len)
 {
     srtp_aes_icm_ctx_t *c = (srtp_aes_icm_ctx_t *)cv;
-    int len = 0;
     unsigned char soutbuf[8192];
     assert(*enc_len < sizeof(soutbuf));
+
+    // do nothing
+    if (!*enc_len)
+        return srtp_err_status_ok;
+
+    // printf("srtp_aes_icm_hisi_encrypt(%d)\n", *enc_len);
 
     debug_print(srtp_mod_aes_icm, "rs0: %s", v128_hex_string(&c->counter));
 
@@ -309,6 +379,10 @@ static srtp_err_status_t srtp_aes_icm_openssl_encrypt(void *cv,
         return srtp_err_status_cipher_fail;
     }
     //*enc_len = len;
+    // printf("memcpy(%p, %p, %d)\n", buf, soutbuf, *enc_len);
+    // hexDump("plaintext", buf, *enc_len);
+    // hexDump("cyphertext", soutbuf, *enc_len);
+    memcpy(buf, soutbuf, *enc_len);
 
     return srtp_err_status_ok;
 }
@@ -316,12 +390,12 @@ static srtp_err_status_t srtp_aes_icm_openssl_encrypt(void *cv,
 /*
  * Name of this crypto engine
  */
-static const char srtp_aes_icm_128_openssl_description[] =
-    "AES-128 counter mode using openssl";
-static const char srtp_aes_icm_192_openssl_description[] =
-    "AES-192 counter mode using openssl";
-static const char srtp_aes_icm_256_openssl_description[] =
-    "AES-256 counter mode using openssl";
+static const char srtp_aes_icm_128_hisi_description[] =
+    "AES-128 counter mode using HiSilicon HW crypto acceleration";
+static const char srtp_aes_icm_192_hisi_description[] =
+    "AES-192 counter mode using HiSilicon HW crypto acceleration";
+static const char srtp_aes_icm_256_hisi_description[] =
+    "AES-256 counter mode using HiSilicon HW crypto acceleration";
 
 /*
  * KAT values for AES self-test.  These
@@ -487,17 +561,17 @@ static const srtp_cipher_test_case_t srtp_aes_icm_256_test_case_0 = {
  * note: the encrypt function is identical to the decrypt function
  */
 const srtp_cipher_type_t srtp_aes_icm_128 = {
-    srtp_aes_icm_openssl_alloc,           /* */
-    srtp_aes_icm_openssl_dealloc,         /* */
-    srtp_aes_icm_openssl_context_init,    /* */
-    0,                                    /* set_aad */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
-    srtp_aes_icm_128_openssl_description, /* */
-    &srtp_aes_icm_128_test_case_0,        /* */
-    SRTP_AES_ICM_128                      /* */
+    srtp_aes_icm_hisi_alloc,           /* */
+    srtp_aes_icm_hisi_dealloc,         /* */
+    srtp_aes_icm_hisi_context_init,    /* */
+    0,                                 /* set_aad */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_set_iv,          /* */
+    0,                                 /* get_tag */
+    srtp_aes_icm_128_hisi_description, /* */
+    &srtp_aes_icm_128_test_case_0,     /* */
+    SRTP_AES_ICM_128                   /* */
 };
 
 /*
@@ -505,17 +579,17 @@ const srtp_cipher_type_t srtp_aes_icm_128 = {
  * note: the encrypt function is identical to the decrypt function
  */
 const srtp_cipher_type_t srtp_aes_icm_192 = {
-    srtp_aes_icm_openssl_alloc,           /* */
-    srtp_aes_icm_openssl_dealloc,         /* */
-    srtp_aes_icm_openssl_context_init,    /* */
-    0,                                    /* set_aad */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
-    srtp_aes_icm_192_openssl_description, /* */
-    &srtp_aes_icm_192_test_case_0,        /* */
-    SRTP_AES_ICM_192                      /* */
+    srtp_aes_icm_hisi_alloc,           /* */
+    srtp_aes_icm_hisi_dealloc,         /* */
+    srtp_aes_icm_hisi_context_init,    /* */
+    0,                                 /* set_aad */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_set_iv,          /* */
+    0,                                 /* get_tag */
+    srtp_aes_icm_192_hisi_description, /* */
+    &srtp_aes_icm_192_test_case_0,     /* */
+    SRTP_AES_ICM_192                   /* */
 };
 
 /*
@@ -523,15 +597,15 @@ const srtp_cipher_type_t srtp_aes_icm_192 = {
  * note: the encrypt function is identical to the decrypt function
  */
 const srtp_cipher_type_t srtp_aes_icm_256 = {
-    srtp_aes_icm_openssl_alloc,           /* */
-    srtp_aes_icm_openssl_dealloc,         /* */
-    srtp_aes_icm_openssl_context_init,    /* */
-    0,                                    /* set_aad */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_encrypt,         /* */
-    srtp_aes_icm_openssl_set_iv,          /* */
-    0,                                    /* get_tag */
-    srtp_aes_icm_256_openssl_description, /* */
-    &srtp_aes_icm_256_test_case_0,        /* */
-    SRTP_AES_ICM_256                      /* */
+    srtp_aes_icm_hisi_alloc,           /* */
+    srtp_aes_icm_hisi_dealloc,         /* */
+    srtp_aes_icm_hisi_context_init,    /* */
+    0,                                 /* set_aad */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_encrypt,         /* */
+    srtp_aes_icm_hisi_set_iv,          /* */
+    0,                                 /* get_tag */
+    srtp_aes_icm_256_hisi_description, /* */
+    &srtp_aes_icm_256_test_case_0,     /* */
+    SRTP_AES_ICM_256                   /* */
 };
