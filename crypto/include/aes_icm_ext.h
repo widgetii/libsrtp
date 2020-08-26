@@ -49,6 +49,20 @@
 #include "cipher.h"
 #include "datatypes.h"
 
+#ifdef HISILICON
+
+#include <hi_unf_cipher.h>
+
+typedef struct {
+    v128_t counter; /* holds the counter value          */
+    v128_t offset;  /* initial offset value             */
+    int key_size;
+    HI_HANDLE hCipher;
+    HI_U8 *key;
+} srtp_aes_icm_ctx_t;
+
+#endif /* HISILISON */
+
 #ifdef OPENSSL
 
 #include <openssl/evp.h>

@@ -54,6 +54,7 @@ set(ENABLE_DEBUG_LOGGING OFF CACHE BOOL "Enable debug logging in all modules")
 set(ERR_REPORTING_STDOUT OFF CACHE BOOL "Enable logging to stdout")
 set(ERR_REPORTING_FILE "" CACHE FILEPATH "Use file for logging")
 set(ENABLE_OPENSSL OFF CACHE BOOL "Enable OpenSSL crypto engine")
+set(ENABLE_HISILICON ON CACHE BOOL "Enable HiSilicon hardware acceleration")
 set(TEST_APPS ON CACHE BOOL "Build test applications")
 option(BUILD_SHARED_LIBS "Build shared library" OFF)
 
@@ -63,6 +64,12 @@ if(ENABLE_OPENSSL)
 endif()
 set(OPENSSL ${ENABLE_OPENSSL} CACHE BOOL INTERNAL)
 set(GCM ${ENABLE_OPENSSL} CACHE BOOL INTERNAL)
+
+if(ENABLE_HISILICON)
+    #TODO
+    #find_package( REQUIRED)
+  include_directories(/home/dima/projects/cameras/sdk/Hi3516CV300_SDK_V1.0.4.0/mpp/include)
+endif()
 
 set(CONFIG_FILE_DIR ${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CONFIG_FILE_DIR})
@@ -84,6 +91,10 @@ if(ENABLE_OPENSSL)
   list(APPEND CIPHERS_SOURCES_C
     crypto/cipher/aes_icm_ossl.c
     crypto/cipher/aes_gcm_ossl.c
+  )
+elseif(ENABLE_HISILICON)
+  list(APPEND CIPHERS_SOURCES_C
+    crypto/cipher/aes_icm_hisi.c
   )
 else()
   list(APPEND  CIPHERS_SOURCES_C
@@ -179,6 +190,10 @@ add_library(srtp2
 target_include_directories(srtp2 PUBLIC crypto/include include)
 if(ENABLE_OPENSSL)
   target_link_libraries(srtp2 OpenSSL::Crypto)
+endif()
+if(ENABLE_HISILICON)
+  target_link_libraries(srtp2
+      /home/dima/projects/cameras/sdk/Hi3516CV300_SDK_V1.0.4.0/mpp/lib/libhi_cipher.a)
 endif()
 if(WIN32)
   target_link_libraries(srtp2 ws2_32)
